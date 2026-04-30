@@ -13,6 +13,7 @@ import {
 } from '../core/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const appIconPath = path.join(__dirname, '..', '..', 'assets', 'icon.png');
 let mainWindow: BrowserWindow | null = null;
 
 function createWindow(): void {
@@ -22,6 +23,7 @@ function createWindow(): void {
     minWidth: 1100,
     minHeight: 720,
     title: 'File Refactor Engine',
+    icon: appIconPath,
     backgroundColor: '#f6f7fb',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -39,6 +41,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  app.setAppUserModelId('local.file-refactor-engine');
   registerIpc();
   createWindow();
 

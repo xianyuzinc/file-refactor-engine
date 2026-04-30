@@ -1,6 +1,6 @@
 {
   "name": "file-refactor-engine",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Dependency-aware file-system refactoring for Windows projects.",
   "main": "dist/main/main.js",
   "type": "module",
@@ -46,14 +46,17 @@
   "build": {
     "appId": "local.file-refactor-engine",
     "productName": "File Refactor Engine",
+    "icon": "assets/icon.ico",
     "files": [
       "dist/**/*",
+      "assets/icon.*",
       "package.json"
     ],
     "directories": {
       "output": "release"
     },
     "win": {
+      "icon": "assets/icon.ico",
       "signAndEditExecutable": false,
       "target": [
         "portable"

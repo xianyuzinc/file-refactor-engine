@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { type CSSProperties, useMemo, useState } from 'react';
 import type {
   ApplyResult,
   DiffPreview,
@@ -9,6 +9,20 @@ import type {
 } from '@core/types';
 
 type BusyState = 'idle' | 'scanning' | 'planning' | 'diffing' | 'applying' | 'rolling-back';
+
+type FileTreeNode = {
+  name: string;
+  relPath: string;
+  kind: 'directory' | 'file';
+  type?: string;
+  children: FileTreeNode[];
+  fileCount: number;
+};
+
+type VisibleTreeRow = {
+  node: FileTreeNode;
+  depth: number;
+};
 
 export function App() {
   const [rootPath, setRootPath] = useState('');
@@ -26,12 +40,20 @@ export function App() {
   const [message, setMessage] = useState('');
   const [applyResult, setApplyResult] = useState<ApplyResult | null>(null);
   const [rollbackResult, setRollbackResult] = useState<RollbackResult | null>(null);
+  const [treeFilter, setTreeFilter] = useState('');
+  const [expandedTreePaths, setExpandedTreePaths] = useState<Set<string>>(() => new Set());
 
   const supportedCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const file of index?.files ?? []) counts.set(file.type, (counts.get(file.type) ?? 0) + 1);
     return [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   }, [index]);
+  const fileTree = useMemo(() => buildFileTree(index?.files ?? []), [index]);
+  const visibleTreeRows = useMemo(
+    () => flattenFileTree(fileTree, expandedTreePaths, treeFilter),
+    [expandedTreePaths, fileTree, treeFilter],
+  );
+  const directoryPaths = useMemo(() => collectDirectoryPaths(fileTree), [fileTree]);
 
   async function chooseProject() {
     const selected = await window.fileRefactor.selectProject();
@@ -53,6 +75,7 @@ export function App() {
       const nextHistory = await window.fileRefactor.listRollbacks(pathOverride);
       setIndex(nextIndex);
       setHistory(nextHistory);
+      setExpandedTreePaths(defaultExpandedPaths(nextIndex.files));
       setMessage(`Indexed ${nextIndex.files.length} files.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
@@ -131,6 +154,54 @@ export function App() {
     }
   }
 
+  function clearPreview() {
+    setPlan(null);
+    setDiffs([]);
+    setApplyResult(null);
+    setRollbackResult(null);
+  }
+
+  function toggleTreeNode(relPath: string) {
+    setExpandedTreePaths((previous) => {
+      const next = new Set(previous);
+      if (next.has(relPath)) next.delete(relPath);
+      else next.add(relPath);
+      return next;
+    });
+  }
+
+  function expandAllTreeNodes() {
+    setExpandedTreePaths(new Set(directoryPaths));
+  }
+
+  function collapseAllTreeNodes() {
+    setExpandedTreePaths(new Set());
+  }
+
+  function setMoveSourceFromTree(relPath: string) {
+    setOperationType('move');
+    setMoveSource(relPath);
+    clearPreview();
+    setMessage(`Move source set to ${relPath}.`);
+  }
+
+  function setMoveDestinationFromTree(relPath: string) {
+    const sourceName = basenameFromRelPath(moveSource);
+    const destination = sourceName ? joinRelPath(relPath, sourceName) : relPath;
+    setOperationType('move');
+    setMoveDestination(destination);
+    clearPreview();
+    setMessage(`Move destination set to ${destination}.`);
+  }
+
+  function setRenamePatternFromTree(node: FileTreeNode) {
+    setOperationType('rename');
+    setRenameMode('glob');
+    setRenamePattern(node.kind === 'directory' ? joinRelPath(node.relPath, '*') : node.relPath);
+    clearPreview();
+    setMessage(`Rename pattern set from ${node.relPath}.`);
+  }
+
   return (
     <main className="app-shell">
       <header className="hero">
@@ -165,13 +236,59 @@ export function App() {
               <span className="chip" key={type}>{type}: {count}</span>
             ))}
           </div>
-          <div className="file-list">
-            {(index?.files ?? []).slice(0, 160).map((file) => (
-              <div className="file-row" key={file.relPath}>
-                <span className={`badge ${file.type}`}>{file.type}</span>
-                <code>{file.relPath}</code>
-              </div>
-            ))}
+          <div className="tree-toolbar">
+            <input
+              value={treeFilter}
+              onChange={(event) => setTreeFilter(event.target.value)}
+              placeholder="Filter project tree"
+              aria-label="Filter project tree"
+              disabled={!index}
+            />
+            <button className="secondary compact" onClick={expandAllTreeNodes} disabled={!index}>Expand</button>
+            <button className="secondary compact" onClick={collapseAllTreeNodes} disabled={!index}>Collapse</button>
+          </div>
+          <div className="file-tree" role="tree" aria-label="Indexed project files">
+            {!index && <div className="tree-empty">Choose a project to inspect its files.</div>}
+            {index && visibleTreeRows.length === 0 && <div className="tree-empty">No files match the current filter.</div>}
+            {visibleTreeRows.map(({ node, depth }) => {
+              const isDirectory = node.kind === 'directory';
+              const isExpanded = expandedTreePaths.has(node.relPath);
+              const depthStyle = { '--tree-depth': depth } as CSSProperties;
+              return (
+                <div
+                  className={`tree-row ${node.kind}`}
+                  key={node.relPath}
+                  role="treeitem"
+                  aria-expanded={isDirectory ? isExpanded || Boolean(treeFilter) : undefined}
+                  style={depthStyle}
+                >
+                  <button
+                    className="tree-toggle"
+                    onClick={() => isDirectory && toggleTreeNode(node.relPath)}
+                    disabled={!isDirectory}
+                    aria-label={isDirectory ? `${isExpanded ? 'Collapse' : 'Expand'} ${node.name}` : undefined}
+                  >
+                    {isDirectory ? (isExpanded || treeFilter ? '▾' : '▸') : '•'}
+                  </button>
+                  <button
+                    className="tree-name"
+                    onClick={() => (isDirectory ? toggleTreeNode(node.relPath) : setMoveSourceFromTree(node.relPath))}
+                    title={node.relPath}
+                  >
+                    <span className="tree-symbol" aria-hidden="true">{isDirectory ? 'dir' : 'file'}</span>
+                    <span className="tree-label">{node.name}</span>
+                    {isDirectory && <span className="tree-count">{node.fileCount}</span>}
+                  </button>
+                  {node.kind === 'file' && <span className={`badge ${node.type ?? 'other'}`}>{node.type}</span>}
+                  {node.kind === 'directory' && <span className="tree-spacer" />}
+                  <div className="tree-actions">
+                    <button className="micro" onClick={() => setMoveSourceFromTree(node.relPath)}>Source</button>
+                    {isDirectory && <button className="micro secondary" onClick={() => setMoveDestinationFromTree(node.relPath)}>Dest</button>}
+                    <button className="micro secondary" onClick={() => setRenamePatternFromTree(node)}>Pattern</button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </section>
 
@@ -331,4 +448,131 @@ function ResultBlock({ title, ok, errors, extra }: { title: string; ok: boolean;
       {errors.map((error) => <span key={error}>{error}</span>)}
     </div>
   );
+}
+
+function buildFileTree(files: ProjectIndex['files']): FileTreeNode {
+  const root: FileTreeNode = { name: 'Project', relPath: '', kind: 'directory', children: [], fileCount: 0 };
+  const directories = new Map<string, FileTreeNode>([['', root]]);
+
+  for (const file of [...files].sort((a, b) => a.relPath.localeCompare(b.relPath))) {
+    const parts = file.relPath.split('/').filter(Boolean);
+    let current = root;
+    let currentPath = '';
+
+    for (let index = 0; index < parts.length; index += 1) {
+      const name = parts[index];
+      const nextPath = currentPath ? `${currentPath}/${name}` : name;
+      const isFile = index === parts.length - 1;
+
+      if (isFile) {
+        current.children.push({
+          name,
+          relPath: file.relPath,
+          kind: 'file',
+          type: file.type,
+          children: [],
+          fileCount: 1,
+        });
+        continue;
+      }
+
+      let directory = directories.get(nextPath);
+      if (!directory) {
+        directory = { name, relPath: nextPath, kind: 'directory', children: [], fileCount: 0 };
+        directories.set(nextPath, directory);
+        current.children.push(directory);
+      }
+      current = directory;
+      currentPath = nextPath;
+    }
+  }
+
+  calculateFileCounts(root);
+  sortTree(root);
+  return root;
+}
+
+function calculateFileCounts(node: FileTreeNode): number {
+  if (node.kind === 'file') return 1;
+  node.fileCount = node.children.reduce((sum, child) => sum + calculateFileCounts(child), 0);
+  return node.fileCount;
+}
+
+function sortTree(node: FileTreeNode) {
+  node.children.sort((a, b) => {
+    if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1;
+    return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+  });
+  for (const child of node.children) sortTree(child);
+}
+
+function flattenFileTree(root: FileTreeNode, expandedPaths: Set<string>, filter: string): VisibleTreeRow[] {
+  const normalizedFilter = filter.trim().toLowerCase();
+  const rows: VisibleTreeRow[] = [];
+
+  function matches(node: FileTreeNode): boolean {
+    if (!normalizedFilter) return true;
+    return (
+      node.name.toLowerCase().includes(normalizedFilter) ||
+      node.relPath.toLowerCase().includes(normalizedFilter) ||
+      (node.type?.toLowerCase().includes(normalizedFilter) ?? false)
+    );
+  }
+
+  function hasMatch(node: FileTreeNode): boolean {
+    return matches(node) || node.children.some(hasMatch);
+  }
+
+  function walk(parent: FileTreeNode, depth: number) {
+    for (const child of parent.children) {
+      if (normalizedFilter && !hasMatch(child)) continue;
+      rows.push({ node: child, depth });
+      if (child.kind === 'directory' && (normalizedFilter || expandedPaths.has(child.relPath))) {
+        walk(child, depth + 1);
+      }
+    }
+  }
+
+  walk(root, 0);
+  return rows;
+}
+
+function collectDirectoryPaths(root: FileTreeNode): string[] {
+  const paths: string[] = [];
+
+  function walk(node: FileTreeNode) {
+    if (node.kind !== 'directory') return;
+    if (node.relPath) paths.push(node.relPath);
+    for (const child of node.children) walk(child);
+  }
+
+  walk(root);
+  return paths;
+}
+
+function defaultExpandedPaths(files: ProjectIndex['files']): Set<string> {
+  const paths = new Set<string>();
+  const expandDepth = files.length <= 160 ? Number.POSITIVE_INFINITY : 2;
+
+  for (const file of files) {
+    const parts = file.relPath.split('/').filter(Boolean);
+    let currentPath = '';
+    for (let index = 0; index < parts.length - 1 && index < expandDepth; index += 1) {
+      currentPath = currentPath ? `${currentPath}/${parts[index]}` : parts[index];
+      paths.add(currentPath);
+    }
+  }
+
+  return paths;
+}
+
+function basenameFromRelPath(relPath: string): string {
+  return relPath.trim().split(/[\\/]/).filter(Boolean).at(-1) ?? '';
+}
+
+function joinRelPath(...parts: string[]): string {
+  return parts
+    .map((part) => part.trim().replace(/^[\\/]+|[\\/]+$/g, ''))
+    .filter(Boolean)
+    .join('/');
 }

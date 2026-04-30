@@ -45,6 +45,18 @@ button.danger {
   background: #a33d36;
 }
 
+button.compact {
+  padding: 8px 10px;
+}
+
+button.micro {
+  min-width: 58px;
+  padding: 6px 8px;
+  border-radius: 5px;
+  font-size: 12px;
+  line-height: 1.1;
+}
+
 input,
 select {
   width: 100%;
@@ -189,10 +201,118 @@ label {
 .badge.json,
 .badge.yaml { background: #f5e7ff; }
 
-.file-list {
-  max-height: 360px;
+.tree-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.file-tree {
+  max-height: 430px;
   overflow: auto;
-  border-top: 1px solid #edf1f6;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.tree-empty {
+  padding: 14px;
+  color: #667085;
+  font-size: 13px;
+}
+
+.tree-row {
+  display: grid;
+  grid-template-columns: 26px minmax(160px, 1fr) auto minmax(178px, auto);
+  gap: 7px;
+  align-items: center;
+  min-height: 38px;
+  padding: 5px 8px 5px calc(8px + var(--tree-depth, 0) * 16px);
+  border-bottom: 1px solid #edf1f6;
+}
+
+.tree-row:last-child {
+  border-bottom: 0;
+}
+
+.tree-row.directory {
+  background: #f8fbfc;
+}
+
+.tree-row:hover {
+  background: #eef7f7;
+}
+
+.tree-toggle,
+.tree-name {
+  border: 0;
+  background: transparent;
+  color: #233044;
+  padding: 0;
+  font-weight: 800;
+}
+
+.tree-toggle {
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tree-toggle:not(:disabled):hover {
+  background: #dbe8ee;
+}
+
+.tree-toggle:disabled {
+  opacity: 0.45;
+}
+
+.tree-name {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  text-align: left;
+}
+
+.tree-symbol {
+  min-width: 34px;
+  border-radius: 5px;
+  padding: 3px 5px;
+  background: #e8f0f5;
+  color: #4d5f73;
+  font-size: 10px;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.tree-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tree-count {
+  border-radius: 999px;
+  background: #d7f0eb;
+  color: #176a74;
+  padding: 2px 7px;
+  font-size: 11px;
+}
+
+.tree-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.tree-spacer {
+  width: 72px;
 }
 
 .file-row {
@@ -394,5 +514,19 @@ h3 {
   .hero {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .tree-toolbar,
+  .tree-row {
+    grid-template-columns: 1fr;
+  }
+
+  .tree-row {
+    padding-left: 8px;
+  }
+
+  .tree-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 }
