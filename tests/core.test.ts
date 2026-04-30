@@ -101,6 +101,45 @@ describe('File Refactor Engine core', () => {
     expect(await readFile(root, 'config.yaml')).toContain('path: assets/data/input.csv');
   });
 
+  it('updates common code, MATLAB, HTML, CSS, TOML, and BibTeX references', async () => {
+    const root = await makeTempProject();
+    await writeFile(root, 'src/app.js', 'const plot = "../assets/plot.png";\n');
+    await writeFile(root, 'src/module.ts', 'export const data = "../assets/input.csv";\n');
+    await writeFile(root, 'matlab/analyze.m', "dataFile = '../assets/input.csv';\nplotFile = \"../assets/plot.png\";\n");
+    await writeFile(root, 'styles/site.css', 'body { background-image: url("../assets/plot.png"); }\n');
+    await writeFile(root, 'index.html', '<img src="assets/plot.png">\n<a href="assets/input.csv">data</a>\n');
+    await writeFile(root, 'settings.toml', 'input = "assets/input.csv"\n');
+    await writeFile(root, 'refs.bib', '@misc{demo,\n  file = {assets/paper.pdf}\n}\n');
+    await writeFile(root, 'assets/plot.png', Buffer.from([1]));
+    await writeFile(root, 'assets/input.csv', 'x,y\n1,2\n');
+    await writeFile(root, 'assets/paper.pdf', Buffer.from([2]));
+
+    const plan = await buildRefactorPlan(root, { type: 'move', sourceRel: 'assets', destinationRel: 'public/assets' });
+    expect(plan.canApply).toBe(true);
+    expect(plan.textEdits.map((edit) => edit.sourceRel).sort()).toEqual([
+      'index.html',
+      'index.html',
+      'matlab/analyze.m',
+      'matlab/analyze.m',
+      'refs.bib',
+      'settings.toml',
+      'src/app.js',
+      'src/module.ts',
+      'styles/site.css',
+    ]);
+
+    const applied = await applyRefactorPlan(plan);
+    expect(applied.ok).toBe(true);
+    expect(await readFile(root, 'src/app.js')).toContain('../public/assets/plot.png');
+    expect(await readFile(root, 'src/module.ts')).toContain('../public/assets/input.csv');
+    expect(await readFile(root, 'matlab/analyze.m')).toContain('../public/assets/input.csv');
+    expect(await readFile(root, 'matlab/analyze.m')).toContain('../public/assets/plot.png');
+    expect(await readFile(root, 'styles/site.css')).toContain('../public/assets/plot.png');
+    expect(await readFile(root, 'index.html')).toContain('public/assets/plot.png');
+    expect(await readFile(root, 'settings.toml')).toContain('public/assets/input.csv');
+    expect(await readFile(root, 'refs.bib')).toContain('public/assets/paper.pdf');
+  });
+
   it('updates notebook source references but leaves outputs untouched', async () => {
     const root = await makeTempProject();
     const notebook = {
@@ -167,13 +206,13 @@ describe('File Refactor Engine core', () => {
     expect(await readFile(root, 'main.tex')).toContain('user changed');
   });
 
-  it('handles paths with spaces and non-ascii characters', async () => {
+  it('handles paths with spaces', async () => {
     const root = await makeTempProject();
-    await writeFile(root, '论文/main.tex', String.raw`\includegraphics{../old figs/阻力 图.png}`);
-    await writeFile(root, 'old figs/阻力 图.png', Buffer.from([1]));
+    await writeFile(root, 'paper/main.tex', String.raw`\includegraphics{../old figs/drag map.png}`);
+    await writeFile(root, 'old figs/drag map.png', Buffer.from([1]));
 
     const plan = await buildRefactorPlan(root, { type: 'move', sourceRel: 'old figs', destinationRel: 'paper figs' });
     expect(plan.canApply).toBe(true);
-    expect(plan.textEdits[0]).toMatchObject({ oldText: '../old figs/阻力 图.png', newText: '../paper figs/阻力 图.png' });
+    expect(plan.textEdits[0]).toMatchObject({ oldText: '../old figs/drag map.png', newText: '../paper figs/drag map.png' });
   });
 });

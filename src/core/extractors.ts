@@ -27,7 +27,56 @@ const TEX_EXTENSIONS_BY_KIND: Record<string, string[]> = {
   'tex.addbibresource': ['.bib'],
 };
 
-const GENERIC_EXTENSIONS = ['.tex', '.md', '.py', '.json', '.yaml', '.yml', '.csv', '.tsv', '.txt', '.png', '.jpg', '.jpeg', '.pdf'];
+const CODE_FILE_TYPES = new Set<SupportedFileType>([
+  'python',
+  'javascript',
+  'typescript',
+  'matlab',
+  'c-family',
+  'jvm',
+  'go',
+  'rust',
+  'dotnet',
+  'php',
+  'ruby',
+  'lua',
+  'shell',
+  'r',
+  'julia',
+]);
+
+const GENERIC_EXTENSIONS = [
+  '.tex',
+  '.md',
+  '.py',
+  '.js',
+  '.jsx',
+  '.ts',
+  '.tsx',
+  '.m',
+  '.c',
+  '.h',
+  '.cpp',
+  '.hpp',
+  '.java',
+  '.go',
+  '.rs',
+  '.cs',
+  '.r',
+  '.jl',
+  '.json',
+  '.yaml',
+  '.yml',
+  '.toml',
+  '.bib',
+  '.csv',
+  '.tsv',
+  '.txt',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.pdf',
+];
 
 export async function extractReferences(index: ProjectIndex): Promise<ReferenceEdge[]> {
   const references: ReferenceEdge[] = [];
@@ -61,7 +110,18 @@ export async function extractReferences(index: ProjectIndex): Promise<ReferenceE
 }
 
 function isSupportedReferenceSource(type: SupportedFileType): boolean {
-  return type === 'tex' || type === 'markdown' || type === 'python' || type === 'ipynb' || type === 'json' || type === 'yaml';
+  return (
+    type === 'tex' ||
+    type === 'markdown' ||
+    CODE_FILE_TYPES.has(type) ||
+    type === 'html' ||
+    type === 'css' ||
+    type === 'ipynb' ||
+    type === 'json' ||
+    type === 'yaml' ||
+    type === 'toml' ||
+    type === 'bibtex'
+  );
 }
 
 function extractCandidates(text: string, type: SupportedFileType): Candidate[] {
@@ -70,15 +130,22 @@ function extractCandidates(text: string, type: SupportedFileType): Candidate[] {
       return extractTexCandidates(text);
     case 'markdown':
       return extractMarkdownCandidates(text, 0, 'markdown.link');
-    case 'python':
-      return extractQuotedPathCandidates(text, 0, 'python.string');
+    case 'html':
+      return extractHtmlCandidates(text);
+    case 'css':
+      return extractCssCandidates(text);
     case 'ipynb':
       return extractNotebookCandidates(text);
     case 'json':
       return extractJsonCandidates(text);
     case 'yaml':
       return extractYamlCandidates(text);
+    case 'toml':
+      return extractTomlCandidates(text);
+    case 'bibtex':
+      return extractBibtexCandidates(text);
     default:
+      if (CODE_FILE_TYPES.has(type)) return extractCodeCandidates(text, type);
       return [];
   }
 }
@@ -136,6 +203,13 @@ function extractMarkdownCandidates(text: string, baseOffset: number, kind: strin
   return candidates;
 }
 
+function extractCodeCandidates(text: string, type: SupportedFileType): Candidate[] {
+  return [
+    ...extractQuotedPathCandidates(text, 0, `${type}.string`),
+    ...extractBacktickPathCandidates(text, 0, `${type}.template-string`),
+  ];
+}
+
 function extractQuotedPathCandidates(text: string, baseOffset: number, kind: string): Candidate[] {
   const candidates: Candidate[] = [];
   const stringRe = /(?:[rRuUbBfF]{0,2})("""[\s\S]*?"""|'''[\s\S]*?'''|"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*?)')/g;
@@ -161,6 +235,79 @@ function extractQuotedPathCandidates(text: string, baseOffset: number, kind: str
   return candidates;
 }
 
+function extractBacktickPathCandidates(text: string, baseOffset: number, kind: string): Candidate[] {
+  const candidates: Candidate[] = [];
+  const backtickRe = /`((?:\\.|[^`\\])*)`/g;
+  let match: RegExpExecArray | null;
+  while ((match = backtickRe.exec(text))) {
+    const encodedContent = match[1];
+    if (encodedContent.includes('${') || encodedContent.includes('{') || encodedContent.includes('}')) continue;
+    const decoded = decodeLooseString(encodedContent);
+    if (!looksPathLike(decoded)) continue;
+    candidates.push({
+      start: baseOffset + match.index + 1,
+      end: baseOffset + match.index + 1 + encodedContent.length,
+      raw: decoded,
+      parser: 'template-string',
+      kind,
+    });
+  }
+  return candidates;
+}
+
+function extractHtmlCandidates(text: string): Candidate[] {
+  const candidates: Candidate[] = [];
+  const attrRe = /\b(src|href|poster|data|action)\s*=\s*(["'])(.*?)\2/gims;
+  let match: RegExpExecArray | null;
+  while ((match = attrRe.exec(text))) {
+    const raw = match[3].trim();
+    if (!looksPathLike(raw)) continue;
+    const start = match.index + match[0].lastIndexOf(match[3]);
+    candidates.push({
+      start,
+      end: start + match[3].length,
+      raw,
+      parser: 'html',
+      kind: `html.${match[1].toLowerCase()}`,
+    });
+  }
+  return candidates;
+}
+
+function extractCssCandidates(text: string): Candidate[] {
+  const candidates: Candidate[] = [];
+  const urlRe = /\burl\(\s*(["']?)([^"')]+)\1\s*\)/gi;
+  let match: RegExpExecArray | null;
+  while ((match = urlRe.exec(text))) {
+    const raw = match[2].trim();
+    if (!looksPathLike(raw)) continue;
+    const start = match.index + match[0].indexOf(match[2]);
+    candidates.push({
+      start,
+      end: start + match[2].length,
+      raw,
+      parser: 'css',
+      kind: 'css.url',
+    });
+  }
+
+  const importRe = /@import\s+(?:url\(\s*)?(["'])([^"']+)\1/g;
+  while ((match = importRe.exec(text))) {
+    const raw = match[2].trim();
+    if (!looksPathLike(raw)) continue;
+    const start = match.index + match[0].lastIndexOf(match[2]);
+    candidates.push({
+      start,
+      end: start + match[2].length,
+      raw,
+      parser: 'css',
+      kind: 'css.import',
+    });
+  }
+
+  return candidates;
+}
+
 function extractJsonCandidates(text: string): Candidate[] {
   const candidates: Candidate[] = [];
   const stringRe = /"((?:\\.|[^"\\])*)"/g;
@@ -178,6 +325,43 @@ function extractJsonCandidates(text: string): Candidate[] {
       raw: decoded,
       parser: 'json',
       kind: 'json.string',
+    });
+  }
+  return candidates;
+}
+
+function extractTomlCandidates(text: string): Candidate[] {
+  const candidates: Candidate[] = [];
+  const quotedRe = /(["'])((?:\\.|(?!\1)[^\\])*)\1/g;
+  let match: RegExpExecArray | null;
+  while ((match = quotedRe.exec(text))) {
+    const decoded = decodeLooseString(match[2]);
+    if (!looksPathLike(decoded)) continue;
+    candidates.push({
+      start: match.index + 1,
+      end: match.index + 1 + match[2].length,
+      raw: decoded,
+      parser: 'toml',
+      kind: 'toml.string',
+    });
+  }
+  return candidates;
+}
+
+function extractBibtexCandidates(text: string): Candidate[] {
+  const candidates: Candidate[] = [];
+  const fieldRe = /\b(file|url|pdf|local-url)\s*=\s*(["{])([^"}]+)(["}])/gi;
+  let match: RegExpExecArray | null;
+  while ((match = fieldRe.exec(text))) {
+    const raw = match[3].trim();
+    if (!looksPathLike(raw)) continue;
+    const start = match.index + match[0].indexOf(match[3]);
+    candidates.push({
+      start,
+      end: start + match[3].length,
+      raw,
+      parser: 'bibtex',
+      kind: `bibtex.${match[1].toLowerCase()}`,
     });
   }
   return candidates;
